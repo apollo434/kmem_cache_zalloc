@@ -179,10 +179,41 @@ For ** kmalloc ** or directly call it, like ** dst_entry **
 路由缓存就是在ip_route_input、ip_route_output中会被创建。
 
 ```
+ip_route_input
+  ip_route_input_noref
+    ip_route_input_rcu
+      ip_route_input_slow
+        rt_dst_alloc
+          dst_alloc
+            kmem_cache_zalloc
 
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+void *dst_alloc(struct dst_ops *ops, struct net_device *dev,
+		int initial_ref, int initial_obsolete, unsigned short flags)
+{
+	struct dst_entry *dst;
+
+	if (ops->gc && dst_entries_get_fast(ops) > ops->gc_thresh) {
+		if (ops->gc(ops)) {
+			printk_ratelimited(KERN_NOTICE "Route cache is full: "
+					   "consider increasing sysctl "
+					   "net.ipv[4|6].route.max_size.\n");
+			return NULL;
+		}
+	}
+
+	dst = kmem_cache_alloc(ops->kmem_cachep, GFP_ATOMIC);
+	if (!dst)
+		return NULL;
+
+	dst_init(dst, ops, dev, initial_ref, initial_obsolete, flags);
+
+	return dst;
+}
+EXPORT_SYMBOL(dst_alloc);
 
 ```
-
 2.Brush up the networking stack.
 
 2.1 Receive packets
@@ -356,4 +387,39 @@ static int ip_forward_finish(struct net *net, struct sock *sk, struct sk_buff *s
   ....
 	return dst_output(net, sk, skb);
 }
+```
+
+#### 路由子系统与邻居子系统的关联 ####
+
+路由子系统与邻居子系统是如何关联的呢，在arp_bind_neighbour函数，下面我们就仔细分析下三层数据收发与路由子系统、邻居子系统的关系。
+
+3.1 数据转发
+
+```
+当本地网卡收到需要转发的数据时，其走向如下：
+
+a.调用ip_rcv函数，对三层数据进行处理
+
+b.进入netfilter的prerouting链，进行netfilter的处理（netfliter子系统）
+
+c.netfilter模块准许通过后，则调用ip_rcv_finish继续处理
+
+d.在ip_rcv_finish中，若数据还没有和路由缓存项关联，则调用函数ip_route_input进行路由缓存项以及路由缓存的查找。当路由缓存没有查找到后，则会调用ip_route_input_slow进行路由项的查找，若查找到路由项，则会调用ip_mkroute_input创建路由缓存项，并在调用rt_intern_hash中，通过arp_bind_neighbour将路由缓存项与邻居项进行绑定，并调用__mkroute_input设置dst的input、output函数，并将skb与路由缓存项进行绑定
+
+e.通过调用dst_input，进入skb->dst->input函数，即2.1中的ip_forward函数。
+
+f.在ip_forward函数中，进行合法性判断后，则会进入netfilter的forward链
+
+g.netfilter通过后，则调用ip_forward_finish，通过dst_output，调用到2.1中的ip_output函数
+
+h.进入netfilter的post链，若准许通过则调用ip_finish_output
+
+i.决定是否进行分段操作，最后调用函数ip_finish_output2
+
+j.在ip_finish_output2里，则会根据数据包关联的路由缓存项，找到缓存项对应的邻居项，并调用neighbour->output，这就进入了邻居子系统了。
+
+k.对于ipv4来书，其output函数为neigh_resolve_output，在该函数里，若判断下一跳地址对应的mac地址还没有解析到，则会调用neigh_event_send更改邻居项的状态，以发送arp request报文，并将该数据包存入队列中，等解析到mac地址以后再发送出去；若下一跳对应的mac地址已经解析到，则会调用neigh->ops->queue_xmit将数据发送出去，对于ipv4来说即是dev_queue_xmit函数，而在该函数里，则会通过dev->hard_start_xmit调用网卡驱动的发送函数，将数据发送出去。
+
+以上就是数据转发过程中，netfilter、路由、邻居子系统之间的关联。
+
 ```
