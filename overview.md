@@ -185,6 +185,175 @@ For ** kmalloc ** or directly call it, like ** dst_entry **
 
 2.Brush up the networking stack.
 
+2.1 Receive packets
+
+** NOTE: **
+**NF_HOOK** Macro is made for Networking Firewall
+
+```
+ip_rcv
+  ip_rcv_finish
+    dst_input
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+/*
+ * IP receive entry point
+ */
+int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt,struct net_device *orig_dev)
+{
+  ....
+
+  return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING,
+  		       net, NULL, skb, dev, NULL,
+  		       ip_rcv_finish);
+}
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+static int ip_rcv_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+  ....
+  /* if ingress device is enslaved to an L3 master device pass the
+	 * skb to its handler for processing
+	 */
+	skb = l3mdev_ip_rcv(skb);
+  ....
+  ret = ip_rcv_finish_core(net, sk, skb, dev);
+  ....
+  dst_input(skb);
+  ....
+}
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/* Input packet from network to transport.  */
+static inline int dst_input(struct sk_buff *skb)
+{
+	return skb_dst(skb)->input(skb);
+}
+
+The skb_dst(skb)->input(skb) has been defined in l3mdev_ip_rcv(skb) and ip_rcv_finish_core(net, sk, skb, dev);
+
 ```
 
+2.2 Send Package from local
+
+** NOTE: **
+
+Who can call dst_output?
+
+1)The Router has been selected via Router Subsystem, means skb->dst is ready.
+
+2) The IP Head has been done, will send it out
+```
+dst_output
+  ip_mc_output or
+  ip_fragment  or
+  ip_output
+    ip_finish_output
+      ip_finish_output_2
+        Neighborhood System()
+          dev_queue_xmit
+
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+/* Output packet to network from transport.  */
+static inline int dst_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+  return skb_dst(skb)->output(net, sk, skb);
+}
+
+The skb_dst(skb)->onput(skb) has been defined in Router Subsystem.
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+int ip_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+	struct net_device *dev = skb_dst(skb)->dev;
+
+	IP_UPD_PO_STATS(net, IPSTATS_MIB_OUT, skb->len);
+
+	skb->dev = dev;
+	skb->protocol = htons(ETH_P_IP);
+
+	return NF_HOOK_COND(NFPROTO_IPV4, NF_INET_POST_ROUTING,
+			    net, sk, skb, NULL, dev,
+			    ip_finish_output,
+			    !(IPCB(skb)->flags & IPSKB_REROUTED));
+}
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+static int ip_finish_output(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+  ....
+#if defined(CONFIG_NETFILTER) && defined(CONFIG_XFRM)
+	/* Policy lookup after SNAT yielded a new policy */
+	if (skb_dst(skb)->xfrm) {
+		IPCB(skb)->flags |= IPSKB_REROUTED;
+		return dst_output(net, sk, skb);
+	}
+#endif
+  ....
+
+	if (skb->len > mtu || (IPCB(skb)->flags & IPSKB_FRAG_PMTU))
+		return ip_fragment(net, sk, skb, mtu, ip_finish_output2);
+
+	return ip_finish_output2(net, sk, skb);
+}
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+static int ip_finish_output2(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+  ....
+  /*  */
+  if (lwtunnel_xmit_redirect(dst->lwtstate)) {
+		int res = lwtunnel_xmit(skb);
+
+		if (res < 0 || res == LWTUNNEL_XMIT_DONE)
+			return res;
+	}
+  ....   
+  /* How to go to the Neighborhood Subsystem */
+  rcu_read_lock_bh();
+	neigh = ip_neigh_for_gw(rt, skb, &is_v6gw);
+	if (!IS_ERR(neigh)) {
+		int res;
+
+		sock_confirm_neigh(skb, neigh);
+		/* if crossing protocols, can not use the cached header */
+		res = neigh_output(neigh, skb, is_v6gw);
+		rcu_read_unlock_bh();
+		return res;
+	}
+	rcu_read_unlock_bh();
+
+```
+2.3 Forwarding
+
+```
+ip_forward
+  xfrm4_route_forward
+  ip_forward_finish
+    dst_ouput
+
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+int ip_forward(struct sk_buff *skb)
+{
+  ....
+	if (!xfrm4_route_forward(skb))
+		goto drop;
+  ....
+	return NF_HOOK(NFPROTO_IPV4, NF_INET_FORWARD,
+		       net, NULL, skb, skb->dev, rt->dst.dev,
+		       ip_forward_finish);
+  ....
+}
+
+static int ip_forward_finish(struct net *net, struct sock *sk, struct sk_buff *skb)
+{
+  ....
+	return dst_output(net, sk, skb);
+}
 ```
