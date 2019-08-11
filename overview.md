@@ -389,7 +389,7 @@ static int ip_forward_finish(struct net *net, struct sock *sk, struct sk_buff *s
 }
 ```
 
-#### 路由子系统与邻居子系统的关联 ####
+### 路由子系统与邻居子系统的关联
 
 路由子系统与邻居子系统是如何关联的呢，在arp_bind_neighbour函数，下面我们就仔细分析下三层数据收发与路由子系统、邻居子系统的关系。
 
