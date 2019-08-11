@@ -146,14 +146,14 @@ struct array_cache {
 **** NOTE: Based on Linux v5.2.8 ****
 
 ```
-kmem_cache
+kmem_cache                        
 ++++++++++++++++++++++++         ++++++++     ++++++++
-+ array_cache __percpu + =======>  cpu 0  .... cpu n
++ array_cache __percpu + =======>  cpu 0  .... cpu n     per cpu arrage
 ++++++++++++++++++++++++         ++++++++     ++++++++
 +                      +
-++++++++++++++++++++++++
-+ freelist_cache       + =======> kmem_cache -> kmem_cache ....
-++++++++++++++++++++++++
+++++++++++++++++++++++++          ++++++++++++++      ++++++++++++++
++ freelist_cache       + <=======>+ kmem_cache + <==> + kmem_cache + for free list
+++++++++++++++++++++++++          ++++++++++++++      ++++++++++++++
 +                      +
 ++++++++++++++++++++++++
 + kmem_cache_node      + ========> NUMA *node[MAX_NUMNODES]
