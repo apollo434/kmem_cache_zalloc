@@ -217,6 +217,8 @@ kmem_cache_init
 	       .name = "kmem_cache",
       };
     >>>>
+    struct kmem_cache *kmem_cache;
+    >>>>
 |
 |----> kmem_cache_node_init(&init_kmem_cache_node[i]); /* Init node */
 |
@@ -243,9 +245,47 @@ kmem_cache_init
 | 1) create the kmem_cache */
 |---->create_boot_cache(kmem_cache, "kmem_cache",offsetof(struct kmem_cache, node) + nr_node_ids * sizeof(struct kmem_cache_node *),SLAB_HWCACHE_ALIGN, 0, 0);
 |
-|---->
+|---->list_add(&kmem_cache->list, &slab_caches);
 |
   >>>>
+  /*
+   * State of the slab allocator.
+   *
+   * This is used to describe the states of the allocator during bootup.
+   * Allocators use this to gradually bootstrap themselves. Most allocators
+   * have the problem that the structures used for managing slab caches are
+   * allocated from slab caches themselves.
+   */
+  enum slab_state {
+  	DOWN,			/* No slab functionality yet */
+  	PARTIAL,		/* SLUB: kmem_cache_node available */
+  	PARTIAL_NODE,		/* SLAB: kmalloc size for node struct available */
+  	UP,			/* Slab caches usable but not all extras yet */
+  	FULL			/* Everything is working */
+  };
+  >>>>
+  enum slab_state slab_state;
+  LIST_HEAD(slab_caches);
+  >>>>
+|
+|---->slab_state = PARTIAL;
+|
+|	/*
+| * Initialize the caches that provide memory for the  kmem_cache_node
+| * structures first.  Without this, further allocations will bug.
+| */
+|----> 	kmalloc_caches[KMALLOC_NORMAL][INDEX_NODE] = create_kmalloc_cache(
+				kmalloc_info[INDEX_NODE].name,
+				kmalloc_size(INDEX_NODE), ARCH_KMALLOC_FLAGS,
+				0, kmalloc_size(INDEX_NODE));
+    >>>>
+        create_kmalloc_cache
+          kmem_cache_zalloc(kmem_cache, GFP_NOWAIT)
+          return s;
+          return
+    >>>>
+|
+|---->
 
 
 ```
