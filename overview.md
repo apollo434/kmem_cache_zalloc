@@ -170,6 +170,86 @@ kmem_cache
 
 For ** kmalloc ** or directly call it, like ** dst_entry **
 
+0. I.E. kmalloc
+
+**NOTE:**
+Based on Linux v5.3-rc4
+
+```
+kmalloc
+  __kmalloc
+    __do_kmalloc
+      kmalloc_slab
+        kmalloc_caches[kmalloc_type(flags)][index]
+      slab_alloc
+
+How to define for kmalloc_caches[][]?
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/*
+* Initialisation.  Called after the page allocator have been initialised and
+* before smp_init().
+*/
+kmem_cache_init
+{
+....
+	/*
+	 * Initialize the caches that provide memory for the  kmem_cache_node
+	 * structures first.  Without this, further allocations will bug.
+	 */
+	kmalloc_caches[KMALLOC_NORMAL][INDEX_NODE] = create_kmalloc_cache(
+				kmalloc_info[INDEX_NODE].name,
+				kmalloc_size(INDEX_NODE), ARCH_KMALLOC_FLAGS,
+				0, kmalloc_size(INDEX_NODE));
+....
+}  
+
+kmem_cache_init
+|
+|----> kmem_cache = &kmem_cache_boot /* Record the static kmem_cache */
+    >>>>
+      #define BOOT_CPUCACHE_ENTRIES	1
+      /* internal cache of cache description objs */
+      static struct kmem_cache kmem_cache_boot = {
+	       .batchcount = 1,
+	       .limit = BOOT_CPUCACHE_ENTRIES,
+	       .shared = 1,
+         .size = sizeof(struct kmem_cache),
+	       .name = "kmem_cache",
+      };
+    >>>>
+|
+|----> kmem_cache_node_init(&init_kmem_cache_node[i]); /* Init node */
+|
+|	/* Bootstrap is tricky, because several objects are allocated
+|	 * from caches that do not exist yet:
+|	 * 1) initialize the kmem_cache cache: it contains the struct
+|	 *    kmem_cache structures of all caches, except kmem_cache itself:
+|	 *    kmem_cache is statically allocated.
+|	 *    Initially an __init data area is used for the head array and the
+|	 *    kmem_cache_node structures, it's replaced with a kmalloc allocated
+|	 *    array at the end of the bootstrap.
+|	 * 2) Create the first kmalloc cache.
+|	 *    The struct kmem_cache for the new cache is allocated normally.
+|	 *    An __init data area is used for the head array.
+|	 * 3) Create the remaining kmalloc caches, with minimally sized
+|	 *    head arrays.
+|	 * 4) Replace the __init data head arrays for kmem_cache and the first
+|	 *    kmalloc cache with kmalloc allocated arrays.
+|	 * 5) Replace the __init data for kmem_cache_node for kmem_cache and
+|	 *    the other cache's with kmalloc allocated memory.
+|	 * 6) Resize the head arrays of the kmalloc caches to their final sizes.
+|	 */
+|
+| 1) create the kmem_cache */
+|---->create_boot_cache(kmem_cache, "kmem_cache",offsetof(struct kmem_cache, node) + nr_node_ids * sizeof(struct kmem_cache_node *),SLAB_HWCACHE_ALIGN, 0, 0);
+|
+|---->
+|
+  >>>>
+
+
+```
+
 1. I.E. dst_entry
 
 ** NOTE **
