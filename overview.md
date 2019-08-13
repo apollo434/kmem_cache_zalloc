@@ -163,7 +163,65 @@ kmem_cache
 4.Detailed comments for kmem_cache_zalloc
 
 ```
+___cache_alloc
+  cpu_cache_get
+  >>>>
+    his_cpu_ptr(cachep->cpu_cache) /* directly get the cpu_cache */
+  >>>>
+  cache_alloc_refill /* If no arrage in per cpu_cache, will refill it */
+  >>>>
+    cache_alloc_refill()
+    {
+      ....
+      /*1. still get the per cpu_cache */
+      cpu_cache_get()
+      ....
+      /* 2. See if we can refill from the shared array */
+      if (shared && transfer_objects(ac, shared, batchcount)) {
+        shared->touched = 1;
+        goto alloc_done;
+      }
+      ...
+      while (batchcount > 0) {
+		      /* 3. Get slab alloc is to come from. */
+		      page = get_first_slab(n, false);
+		      if (!page)
+			       goto must_grow;
 
+		      check_spinlock_acquired(cachep);
+
+		      batchcount = alloc_block(cachep, ac, page, batchcount);
+		      fixup_slab_list(cachep, n, page, &list);
+	       }
+
+direct_grow:
+	if (unlikely(!ac->avail)) {
+		/* Check if we can use obj in pfmemalloc slab */
+		if (sk_memalloc_socks()) {
+			void *obj = cache_alloc_pfmemalloc(cachep, n, flags);
+
+			if (obj)
+				return obj;
+		}
+
+		page = cache_grow_begin(cachep, gfp_exact_node(flags), node);
+
+		/*
+		 * cache_grow_begin() can reenable interrupts,
+		 * then ac could change.
+		 */
+		ac = cpu_cache_get(cachep);
+		if (!ac->avail && page)
+			alloc_block(cachep, ac, page, batchcount);
+		cache_grow_end(cachep, page);
+
+		if (!ac->avail)
+			return NULL;
+	}
+	ac->touched = 1;
+
+	return ac->entry[--ac->avail];
+    }
 ```
 
 ### Purpose
